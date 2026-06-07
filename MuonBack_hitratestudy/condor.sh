@@ -8,9 +8,11 @@
 
 #######################################################################################
 source /cvmfs/ship.cern.ch/24.10/setUp.sh 
-#alienv load FairShip/latest-master-release > config_<version>.sh
-source /afs/cern.ch/user/a/anupamar/HTCondor/configfiles/config_ECN3_2024.sh
-echo 'config sourced'
+export FAIRSHIP=/cvmfs/ship.cern.ch/24.10/sw/slc9_x86-64/FairShip/master-local1
+export ROOTSYS=/cvmfs/ship.cern.ch/24.10/sw/slc9_x86-64/ROOT/latest-release
+export PYTHONPATH=$FAIRSHIP/python:$ROOTSYS/lib:$PYTHONPATH
+export LD_LIBRARY_PATH=$FAIRSHIP/lib:$ROOTSYS/lib:$LD_LIBRARY_PATH
+echo 'environment set'
 #######################################################################################
 
-python /afs/cern.ch/user/a/anupamar/Analysis/SBTGeometry_optimisation/adapted_code/MuonBack_hitrates.py 
+python /afs/cern.ch/work/j/jaweiss/private/FairShip_MuonAnalysis/MuonBack_hitratestudy/MuonBack_hitrates.py

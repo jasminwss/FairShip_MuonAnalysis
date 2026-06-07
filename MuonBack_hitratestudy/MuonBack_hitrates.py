@@ -19,7 +19,7 @@ import shipunit as u
 PDGData = ROOT.TDatabasePDG.Instance()
 parser = ArgumentParser()
 parser.add_argument('--test'    	, dest='testing_code' 	, help='Run Test'   , required=False, action='store_true',default=False)
-parser.add_argument('--path'     , dest='path' 			, help='path to the MuonBack files'		, required=False, action='store_true',default='/eos/experiment/ship/simulation/bkg/MuonBack_2024helium/8070735')
+parser.add_argument('--path'     , dest='path' 			, help='path to the MuonBack files'		, required=False, action='store', default='/eos/experiment/ship/simulation/bkg/MuonBack_2024helium/8070735')
 
 options = parser.parse_args()
 
