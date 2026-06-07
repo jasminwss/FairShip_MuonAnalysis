@@ -1,0 +1,14 @@
+logs/
+__pycache__/
+*.pyc
+*.root
+*.so
+*.pcm
+*.d
+*.err
+*.out
+*.log
+*.cc
+*.root
+test_*.txt
+*.cc
