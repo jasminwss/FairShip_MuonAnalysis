@@ -65,6 +65,7 @@ h['vetopoint_min_energydeposition_muons'].GetZaxis().SetTitleOffset(-0.5);
 h['vetopoint_min_energydeposition_muons'].GetZaxis().SetTitleSize(0.03);   
 
 threshold_list=[0,10,20,30,45,50,60,90]
+ORIGIN_CATEGORIES = ('cavern', 'SBT', 'upstream')
 
 for threshold in threshold_list:
 	
@@ -132,9 +133,41 @@ def dump(event,mom_threshold=0):
     
     print(tabulate(event_table,headers=headers,floatfmt=".3f",tablefmt='simple_outline'))
 
+
+def classify_production_vertex(track):
+    """
+    Classify where a track was produced using ROOT geometry navigation. 
+    Returns 'cavern', 'SBT', or 'upstream.
+    """
+    nav = ROOT.gGeoManager.GetCurrentNavigator()
+    if not nav:
+        print("not nav -> upstream")
+        return 'upstream'
+
+    vx, vy, vz = track.GetStartX(), track.GetStartY(), track.GetStartZ()
+    nav.SetCurrentPoint(vx, vy, vz)
+    node = nav.FindNode()
+
+    if node is None: 
+        return 'upstream'
+
+    vol_name = node.GetName()
+
+    if 'Cavern' in vol_name:
+        #print("found cavern")
+        return 'cavern'
+
+    if 'LiSc' in vol_name or 'Rib' in vol_name or 'Wall' in vol_name:
+        #print("found SBT")
+        return 'SBT'
+
+    #print ("found neither cavern nor SBT, but ", vol_name)
+    return 'upstream'
+
+
 def print_result(tag):
 	
-	global h,Event_weight,SBT_Event_weight,digihitrate,sst_hitrate
+	global h,Event_weight,SBT_Event_weight,digihitrate_by_origin,sst_hitrate
 	ut.writeHists(h, directory +tag+'.root')
 
 	with open(directory +tag+'_readme.txt', 'w') as readme: 
@@ -159,56 +192,29 @@ def print_result(tag):
 		readme.write("\n  --------------------------------------------------------------------------------\n\n")
 		
 		
-		print("  {:10}\t {:10}\t\t{:10}".format('THRESHOLD','TOTAL DIGIHIT-RATE',"MAXIMUM DIGIHIT-RATE IN A CELL"))
-		print("  --------------------------------------------------------------------------------\n")
-		
-		readme.write( "\n\n  {:10}\t {:10}\t\t{:10}\n------------------------------------------------------------------------------------------------------------------------\n".format('THRESHOLD','TOTAL DIGIHIT-RATE',"MAXIMUM DIGIHIT-RATE IN A CELL"))
+		header = "  {:10}\t {:>12}\t {:>12}\t {:>12}\t {:>12}".format(
+				'THRESHOLD', 'TOTAL (MHz)', 'cavern (MHz)', 'SBT (MHz)', 'upstream (MHz)')
+		print(header)
+		print("  " + "-"*80)
+		readme.write("\n\n" + header + "\n  " + "-"*80)
+
 		for threshold in threshold_list:
-			print(         " {:5} MeV\t {:10} MHz\t\t {:10.2} Hz --->{:10}".format(threshold,round( sum(digihitrate[f'{threshold}MeV'].values())*1e-6,4),max(digihitrate[f'{threshold}MeV'].items(), key=lambda k: k[1])[1]," ( Detector ID: "+str(max(digihitrate[f'{threshold}MeV'].items(), key=lambda k: k[1])[0])+")"))
-			readme.write("\n {:5} MeV\t {:10} MHz\t\t {:10.2} Hz --->{:10}".format(threshold,round( sum(digihitrate[f'{threshold}MeV'].values())*1e-6,4),max(digihitrate[f'{threshold}MeV'].items(), key=lambda k: k[1])[1]," ( Detector ID: "+str(max(digihitrate[f'{threshold}MeV'].items(), key=lambda k: k[1])[0])+")"))
-		
-		print(       "\n  --------------------------------------------------------------------------------\n")
-		readme.write("\n  --------------------------------------------------------------------------------\n")
+			tkey = f'{threshold}MeV'
+			origin_totals = {o: sum(digihitrate_by_origin.get(tkey, {}).get(o, {}).values()) for o in ORIGIN_CATEGORIES}
+			total = sum(origin_totals.values())
 
+			line = " {:5} MeV\t {:>12.4f}\t {:>12.4f}\t {:>12.4f}\t {:>12.4f}".format(
+				threshold,
+				total * 1e-6,
+				origin_totals['cavern']   * 1e-6,
+				origin_totals['SBT']      * 1e-6,
+				origin_totals['upstream'] * 1e-6,
+			)
+			print(line)
+			readme.write("\n" + line)
 
-		print("\n\n  ================================================================================")
-		print("\n  TRACKING STATIONS")
-		print("  ---------------------------------------------------------\n")
-		print("\n  {:5} {:20}      {:10}".format("","","HITRATE"))		
-		print( "  {:5}  {:20}     {:10}".format("","","--------"))		
-		readme.write("\n\n  ================================================================================\n")
-		readme.write("\n\n  {:5} {:20}      {:10}".format("","","HITRATE"))		
-		readme.write("\n  {:5}  {:20}     {:10}".format("","","--------"))		
-
-		TOTALHITRATE=0
-		muonhitrate={}
-		for station in range(1,5):
-			if station not in muonhitrate:muonhitrate[station]=0
-			print("   PLANE ",station)
-			print( "  {:20}  {:30}     {:10}".format("-------------------","",""))		
-			readme.write("\n   PLANE "+str(station))
-			readme.write( "\n  {:5}  {:20}     {:10}".format("-------------------","",""))		
-
-			if not station in sst_hitrate: continue
-			for particle_name in sst_hitrate[station]:
-				if particle_name.startswith("mu"):muonhitrate[station]+=float(sst_hitrate[station][particle_name])
-				print( 			"  {:5} {:20}  {:10.5} Hz".format("",particle_name,float(sst_hitrate[station][particle_name])))	
-				readme.write( "\n  {:5} {:20}  {:10.5} Hz".format("",particle_name,float(sst_hitrate[station][particle_name])))	
-			print("  -----------------------------------------\n")
-			print(" {:10}  {:10.5} Hz\n\n".format(" Total hitrate in station "+str(station)+" =",float(sum(sst_hitrate[station].values()))))			
-			readme.write("\n  -----------------------------------------\n")
-			readme.write("\n {:10}  {:10.5} Hz\n\n".format(" Total hitrate in station "+str(station)+" =",float(sum(sst_hitrate[station].values()))))			
-			TOTALHITRATE+=sum(sst_hitrate[station].values())
-		
-		print("  ---------------------------------------------------------\n")
-		print( " {:20}{:10}{:10.5} Hz".format(" Total hitrate in all the trackers:","",float(TOTALHITRATE)))
-		print( " {:20}{:5}{:10.5} Hz".format(" Total muon hitrate in all the trackers:","",float(sum(muonhitrate.values()))))
-		print("\n  ================================================================================")
-		
-		readme.write("\n  ================================================================================\n")
-		readme.write("\n  {:20}{:10}{:10.5} Hz".format(" Total hitrate in all the trackers:","",float(TOTALHITRATE)))
-		readme.write("\n  {:20}{:5}{:10.5} Hz".format(" Total muon hitrate in all the trackers:","",float(sum(muonhitrate.values()))))
-		readme.write("\n  ================================================================================\n")
+		print(       "\n  " + "-"*80 + "\n")
+		readme.write("\n  " + "-"*80 + "\n")
 			
 def print_SBTcell_relative_pos(vetoPoint):
     # Initialize the navigator
@@ -246,10 +252,10 @@ def print_SBTcell_relative_pos(vetoPoint):
 
 def Main_function():	
 	
-	global h,Event_weight,SBT_Event_weight,digihitrate,sst_hitrate
-	
+	global h,Event_weight,SBT_Event_weight,digihitrate_by_origin,sst_hitrate
+
 	Event_weight,SBT_Event_weight ={},{}
-	digihitrate ={}
+	digihitrate_by_origin ={}
 	total_particlehitrate=0
 	files=0
 	global_event_id=-1
@@ -365,7 +371,8 @@ def Main_function():
 
 
 				ElossPerDetId    = {}
-				listOfVetoPoints = {}				
+				listOfVetoPoints = {}
+				originElossPerDetId = {}
 				#tOfFlight        = {}
 
 				for key,veto_MCPoint in enumerate(event.vetoPoint):
@@ -378,19 +385,23 @@ def Main_function():
 					pdgCode = event.MCTrack[veto_MCPoint.GetTrackID()].GetPdgCode()
 					detID 	= veto_MCPoint.GetDetectorID()
 					shape_nr= detID//100000
+					hitting_track = event.MCTrack[veto_MCPoint.GetTrackID()]
+					origin = classify_production_vertex(hitting_track)
 
 					vetopoint_z,vetopoint_x,vetopoint_y = veto_MCPoint.GetZ(),veto_MCPoint.GetX(),veto_MCPoint.GetY()
 					
 					Eloss = veto_MCPoint.GetEnergyLoss()
 
-					if detID not in ElossPerDetId: 
+					if detID not in ElossPerDetId:
 						ElossPerDetId[detID]=0
 						listOfVetoPoints[detID]=[]
+						originElossPerDetId[detID] = {o: 0.0 for o in ORIGIN_CATEGORIES}
 						#tOfFlight[detID]=[]
 						
 					ElossPerDetId[detID] += Eloss
 					listOfVetoPoints[detID].append(key)
 					#tOfFlight[detID].append(veto_MCPoint.GetTime())
+					originElossPerDetId[detID][origin] += Eloss
 					
 					try:	particle_name=PDGData.GetParticle(pdgCode).GetName()
 					except:	particle_name='others'
@@ -431,6 +442,7 @@ def Main_function():
 					#if ElossPerDetId[detID]<0.045:    aHit.setInvalid()  
 					
 					digiSBT[index] = aHit
+					cell_origin = max(originElossPerDetId[detID], key=lambda o: originElossPerDetId[detID][o])  # dominant origin = whichever deposited the most Eloss
 									
 					for threshold in threshold_list:
 						
@@ -439,14 +451,14 @@ def Main_function():
 						
 						if ElossPerDetId[detID]<0.001*threshold:	continue
 						
-						if f'{threshold}MeV' not in digihitrate: 		
-							digihitrate[f'{threshold}MeV']={}
-						
-						if detID not in digihitrate[f'{threshold}MeV']: 	
-							digihitrate[f'{threshold}MeV'][detID]=0
+						if f'{threshold}MeV' not in digihitrate_by_origin:
+							digihitrate_by_origin[f'{threshold}MeV'] = {o: {} for o in ORIGIN_CATEGORIES}
+
+						if detID not in digihitrate_by_origin[f'{threshold}MeV'][cell_origin]:
+							digihitrate_by_origin[f'{threshold}MeV'][cell_origin][detID] = 0
 						
 						digihit_multiplicity[threshold] 	 +=1
-						digihitrate[f'{threshold}MeV'][detID]+=Event_weight[global_event_id]
+						digihitrate_by_origin[f'{threshold}MeV'][cell_origin][detID]+=Event_weight[global_event_id]
 						
 						h[f'{threshold}_vetopoint_multiplicity'			].Fill(len(listOfVetoPoints[detID]),weight) 	#how many vetopoints per digitised hit	
 						h[f'{threshold}_z_vs_vetopoint_multiplicity'	].Fill(aHit.GetZ(),len(listOfVetoPoints[detID]),weight)
