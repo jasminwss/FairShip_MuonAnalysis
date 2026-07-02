@@ -65,7 +65,8 @@ h['vetopoint_min_energydeposition_muons'].GetZaxis().SetTitleOffset(-0.5);
 h['vetopoint_min_energydeposition_muons'].GetZaxis().SetTitleSize(0.03);   
 
 threshold_list=[0,10,20,30,45,50,60,90]
-ORIGIN_CATEGORIES = ('cavern', 'SBT', 'upstream')
+ORIGIN_TYPE_CATEGORIES = ('muon_cavern', 'muon_SBT', 'EM_debris_upstream')
+TYPE_CATEGORIES = ORIGIN_TYPE_CATEGORIES
 
 for threshold in threshold_list:
 	
@@ -134,87 +135,73 @@ def dump(event,mom_threshold=0):
     print(tabulate(event_table,headers=headers,floatfmt=".3f",tablefmt='simple_outline'))
 
 
-def classify_production_vertex(track):
-    """
-    Classify where a track was produced using ROOT geometry navigation. 
-    Returns 'cavern', 'SBT', or 'upstream.
-    """
-    nav = ROOT.gGeoManager.GetCurrentNavigator()
-    if not nav:
-        print("not nav -> upstream")
-        return 'upstream'
+def get_muon_tracks_hitting_SBT(event):
+    muon_tracks = set()
+    for hit in event.vetoPoint:
+        detID = hit.GetDetectorID()
+        if 1000 < detID < 999999 and abs(hit.PdgCode()) == 13:
+            muon_tracks.add(hit.GetTrackID())
+    return muon_tracks
 
-    vx, vy, vz = track.GetStartX(), track.GetStartY(), track.GetStartZ()
-    nav.SetCurrentPoint(vx, vy, vz)
-    node = nav.FindNode()
+def is_event_with_muonhit_in_CAVERN(event):
+    """Any muon track in the event (not just those that hit the SBT) that
+    produces a daughter starting inside the Cavern volume."""
+    for track in event.MCTrack:
+        if track.GetMotherId() == -1: continue
+        if abs(event.MCTrack[track.GetMotherId()].GetPdgCode()) == 13:
+            X, Y, Z = track.GetStartX(), track.GetStartY(), track.GetStartZ()
+            node = ROOT.gGeoManager.FindNode(X, Y, Z)
+            if node and node.GetVolume().GetName().startswith('Cavern'):
+                return True
+    return False
 
-    if node is None: 
-        return 'upstream'
-
-    vol_name = node.GetName()
-
-    if 'Cavern' in vol_name:
-        #print("found cavern")
-        return 'cavern'
-
-    if 'LiSc' in vol_name or 'Rib' in vol_name or 'Wall' in vol_name:
-        #print("found SBT")
-        return 'SBT'
-
-    #print ("found neither cavern nor SBT, but ", vol_name)
-    return 'upstream'
-
+def classify_event_origin(event):
+    # Cavern check first and unrestricted, so muons that never leave an SBT
+    # hit but do interact in the Cavern aren't mis-bucketed as EM_debris_upstream.
+    if is_event_with_muonhit_in_CAVERN(event):
+        return 'muon_cavern'
+    if get_muon_tracks_hitting_SBT(event):
+        return 'muon_SBT'
+    return 'EM_debris_upstream'
 
 def print_result(tag):
-	
-	global h,Event_weight,SBT_Event_weight,digihitrate_by_origin,sst_hitrate
+
+	global h,Event_weight,SBT_Event_weight,sst_hitrate, event_origin_digihitrate, event_origin_weights
 	ut.writeHists(h, directory +tag+'.root')
 
-	with open(directory +tag+'_readme.txt', 'w') as readme: 
-				
-		print("\n\n\n")
-		
-		
-		print(" {:46} Generated: {:10.5}\t Scaled to one spill: {:10.5}".format('Muon BG Statistics',float(len(Event_weight)),float(sum(Event_weight.values()))))
-		print(" {:46} Generated: {:10.5}\t Scaled to one spill: {:10.5}".format('Muon BG Statistics with SBT activity',float(len(SBT_Event_weight)),float(sum(SBT_Event_weight.values()))))
-		
-		print("\n\n  ================================================================================")
-		print("\n  SBT")
-		print("  --------------------------------------------------------------------------------\n\n")
-		
+	with open(directory + tag + '_readme.txt', 'w') as readme:
 
-		
-		readme.write("\n {:46} Generated: {:10.5}\t Scaled to one spill: {:10.5}".format('Muon BG Statistics',float(len(Event_weight)),float(sum(Event_weight.values()))))
-		readme.write("\n {:46} Generated: {:10.5}\t Scaled to one spill: {:10.5}".format('Muon BG Statistics with SBT activity',float(len(SBT_Event_weight)),float(sum(SBT_Event_weight.values()))))
-		
-		readme.write("\n\n  ================================================================================")
-		readme.write("\n  SBT")
-		readme.write("\n  --------------------------------------------------------------------------------\n\n")
-		
-		
+		print(f"\n  Events (scaled):  muon_SBT={event_origin_weights['muon_SBT']:.4g}"
+		      f"  muon_cavern={event_origin_weights['muon_cavern']:.4g}"
+		      f"  EM_debris={event_origin_weights['EM_debris_upstream']:.4g}\n")
+		readme.write(f"\n  Events (scaled):  muon_SBT={event_origin_weights['muon_SBT']:.4g}"
+		             f"  muon_cavern={event_origin_weights['muon_cavern']:.4g}"
+		             f"  EM_debris={event_origin_weights['EM_debris_upstream']:.4g}\n")
+
 		header = "  {:10}\t {:>12}\t {:>12}\t {:>12}\t {:>12}".format(
-				'THRESHOLD', 'TOTAL (MHz)', 'cavern (MHz)', 'SBT (MHz)', 'upstream (MHz)')
+			'THRESHOLD', 'TOTAL (MHz)', 'muon_cavern', 'muon_SBT', 'EM_debris')
 		print(header)
 		print("  " + "-"*80)
 		readme.write("\n\n" + header + "\n  " + "-"*80)
 
 		for threshold in threshold_list:
 			tkey = f'{threshold}MeV'
-			origin_totals = {o: sum(digihitrate_by_origin.get(tkey, {}).get(o, {}).values()) for o in ORIGIN_CATEGORIES}
-			total = sum(origin_totals.values())
-
+			ev_totals = {cat: sum(event_origin_digihitrate.get(tkey, {}).get(cat, {}).values())
+						for cat in TYPE_CATEGORIES}
+			total_ev = sum(ev_totals.values())
 			line = " {:5} MeV\t {:>12.4f}\t {:>12.4f}\t {:>12.4f}\t {:>12.4f}".format(
 				threshold,
-				total * 1e-6,
-				origin_totals['cavern']   * 1e-6,
-				origin_totals['SBT']      * 1e-6,
-				origin_totals['upstream'] * 1e-6,
+				total_ev * 1e-6,
+				ev_totals['muon_cavern']        * 1e-6,
+				ev_totals['muon_SBT']           * 1e-6,
+				ev_totals['EM_debris_upstream'] * 1e-6,
 			)
 			print(line)
 			readme.write("\n" + line)
 
-		print(       "\n  " + "-"*80 + "\n")
+		print("\n  " + "-"*80 + "\n")
 		readme.write("\n  " + "-"*80 + "\n")
+
 			
 def print_SBTcell_relative_pos(vetoPoint):
     # Initialize the navigator
@@ -252,10 +239,9 @@ def print_SBTcell_relative_pos(vetoPoint):
 
 def Main_function():	
 	
-	global h,Event_weight,SBT_Event_weight,digihitrate_by_origin,sst_hitrate
+	global h,Event_weight,SBT_Event_weight,sst_hitrate,event_origin_digihitrate,event_origin_weights
 
 	Event_weight,SBT_Event_weight ={},{}
-	digihitrate_by_origin ={}
 	total_particlehitrate=0
 	files=0
 	global_event_id=-1
@@ -264,6 +250,8 @@ def Main_function():
 	sbt_pdg_index = 0
 	sst_pdg_index = 0
 	sst_hitrate = {}
+	event_origin_digihitrate = {}          # {tkey: {cat: {detID: rate}}}
+	event_origin_weights = {cat: 0.0 for cat in TYPE_CATEGORIES}
 
 	min_maxEloss_array = {} 
 	for threshold in threshold_list:
@@ -295,7 +283,7 @@ def Main_function():
 				ShipGeo = upkl.load('ShipGeo')
 				sGeo   = fgeo.FAIRGeom
 
-			if options.testing_code and files>6: break
+			if options.testing_code and files>50: break
 
 			print(files,jobDir)
 			
@@ -312,6 +300,8 @@ def Main_function():
 						break		
 				
 				weight=Event_weight[global_event_id]
+				event_origin = classify_event_origin(event)
+				event_origin_weights[event_origin] += weight
 				
 				#------------------------UBT------------------------------------------------
 				
@@ -372,7 +362,7 @@ def Main_function():
 
 				ElossPerDetId    = {}
 				listOfVetoPoints = {}
-				originElossPerDetId = {}
+				#originElossPerDetId = {}
 				#tOfFlight        = {}
 
 				for key,veto_MCPoint in enumerate(event.vetoPoint):
@@ -385,8 +375,9 @@ def Main_function():
 					pdgCode = event.MCTrack[veto_MCPoint.GetTrackID()].GetPdgCode()
 					detID 	= veto_MCPoint.GetDetectorID()
 					shape_nr= detID//100000
-					hitting_track = event.MCTrack[veto_MCPoint.GetTrackID()]
-					origin = classify_production_vertex(hitting_track)
+					trackID = veto_MCPoint.GetTrackID()
+					hitting_track = event.MCTrack[trackID]
+					#origin = classify_production_vertex(hitting_track)
 
 					vetopoint_z,vetopoint_x,vetopoint_y = veto_MCPoint.GetZ(),veto_MCPoint.GetX(),veto_MCPoint.GetY()
 					
@@ -395,13 +386,14 @@ def Main_function():
 					if detID not in ElossPerDetId:
 						ElossPerDetId[detID]=0
 						listOfVetoPoints[detID]=[]
-						originElossPerDetId[detID] = {o: 0.0 for o in ORIGIN_CATEGORIES}
+						#originElossPerDetId[detID] = {o: 0.0 for o in ORIGIN_CATEGORIES}
 						#tOfFlight[detID]=[]
+					
 						
 					ElossPerDetId[detID] += Eloss
 					listOfVetoPoints[detID].append(key)
 					#tOfFlight[detID].append(veto_MCPoint.GetTime())
-					originElossPerDetId[detID][origin] += Eloss
+					#originElossPerDetId[detID][origin] += Eloss
 					
 					try:	particle_name=PDGData.GetParticle(pdgCode).GetName()
 					except:	particle_name='others'
@@ -442,23 +434,23 @@ def Main_function():
 					#if ElossPerDetId[detID]<0.045:    aHit.setInvalid()  
 					
 					digiSBT[index] = aHit
-					cell_origin = max(originElossPerDetId[detID], key=lambda o: originElossPerDetId[detID][o])  # dominant origin = whichever deposited the most Eloss
-									
+
+					#cell_origin = max(originElossPerDetId[detID], key=lambda o: originElossPerDetId[detID][o])  # dominant origin = whichever deposited the most Eloss
+
 					for threshold in threshold_list:
 						
 						#if threshold not in digihit_multiplicity:
 						#	digihit_multiplicity[threshold]=0
 						
 						if ElossPerDetId[detID]<0.001*threshold:	continue
-						
-						if f'{threshold}MeV' not in digihitrate_by_origin:
-							digihitrate_by_origin[f'{threshold}MeV'] = {o: {} for o in ORIGIN_CATEGORIES}
-
-						if detID not in digihitrate_by_origin[f'{threshold}MeV'][cell_origin]:
-							digihitrate_by_origin[f'{threshold}MeV'][cell_origin][detID] = 0
-						
+						tkey = f'{threshold}MeV'
+						if tkey not in event_origin_digihitrate:
+							event_origin_digihitrate[tkey] = {cat: {} for cat in TYPE_CATEGORIES}
+						if detID not in event_origin_digihitrate[tkey][event_origin]:
+							event_origin_digihitrate[tkey][event_origin][detID] = 0.0
+						event_origin_digihitrate[tkey][event_origin][detID] += weight
 						digihit_multiplicity[threshold] 	 +=1
-						digihitrate_by_origin[f'{threshold}MeV'][cell_origin][detID]+=Event_weight[global_event_id]
+						#digihitrate_by_origin[f'{threshold}MeV'][cell_origin][detID]+=Event_weight[global_event_id]
 						
 						h[f'{threshold}_vetopoint_multiplicity'			].Fill(len(listOfVetoPoints[detID]),weight) 	#how many vetopoints per digitised hit	
 						h[f'{threshold}_z_vs_vetopoint_multiplicity'	].Fill(aHit.GetZ(),len(listOfVetoPoints[detID]),weight)
